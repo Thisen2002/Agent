@@ -1,0 +1,1 @@
+pip install ollama flask, set JARVIS_PASSWORD
