@@ -1,0 +1,4 @@
+ollama
+flask
+python-dotenv
+requests

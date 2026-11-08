@@ -1,4 +1,5 @@
 import os
+import requests
 from dotenv import load_dotenv
 import threading
 import ollama
@@ -9,6 +10,7 @@ load_dotenv()
 
 MODEL = "qwen3.5:4b"
 PASSWORD = os.environ.get("JARVIS_PASSWORD")
+DEFAULT_CITY = os.environ.get("JARVIS_CITY")
 
 THINK_TRIGGERS = ("think about", "think hard", "think carefully", "think deeply")
 
@@ -20,7 +22,52 @@ def get_time() -> str:
     """Get the current date and time."""
     return datetime.now().strftime("%A, %d %B %Y, %I:%M %p")
 
-TOOLS = {"get_time": get_time}
+WEATHER_CODES = {
+    0: "clear sky", 1: "mostly clear", 2: "partly cloudy", 3: "overcast",
+    45: "foggy", 48: "foggy", 51: "light drizzle", 53: "drizzle",
+    55: "heavy drizzle", 61: "light rain", 63: "rain", 65: "heavy rain",
+    80: "rain showers", 81: "rain showers", 82: "violent rain showers",
+    95: "thunderstorm", 96: "thunderstorm with hail", 99: "thunderstorm with hail",
+}
+
+def get_weather(city: str = "") -> str:
+    """Get the current weather for a city.
+
+    Args:
+        city: City name, for example "Colombo". Leave empty to use the user's home city.
+    """
+    city = city or DEFAULT_CITY
+    try:
+        geo = requests.get(
+            "https://geocoding-api.open-meteo.com/v1/search",
+            params={"name": city, "count": 1},
+            timeout=10,
+        ).json()
+        if not geo.get("results"):
+            return f"Could not find a place called {city}."
+        place = geo["results"][0]
+
+        cur = requests.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": place["latitude"],
+                "longitude": place["longitude"],
+                "current": "temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code",
+                "timezone": "auto",
+            },
+            timeout=10,
+        ).json()["current"]
+
+        sky = WEATHER_CODES.get(cur["weather_code"], "unknown conditions")
+        return (
+            f"{place['name']}, {place.get('country', '')}: {sky}, "
+            f"{cur['temperature_2m']}°C (feels like {cur['apparent_temperature']}°C), "
+            f"humidity {cur['relative_humidity_2m']}%, wind {cur['wind_speed_10m']} km/h."
+        )
+    except requests.RequestException:
+        return "The weather service could not be reached."
+
+TOOLS = {"get_time": get_time, "get_weather": get_weather}
 
 SYSTEM = (
     "You are Jarvis, a polite, dry-witted personal assistant. "
