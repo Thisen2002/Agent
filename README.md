@@ -20,10 +20,9 @@ A local personal assistant with a web chat interface, powered by Ollama (`qwen3.
    conda activate jarvis
    pip install -r requirements.txt
    ```
-3. Create `.env`:
+3. Create `.env` from the example, then set your own password:
    ```
-   JARVIS_PASSWORD=your-password
-   JARVIS_CITY=Colombo
+   cp .env.example .env
    ```
 4. For a 4 GB GPU, start Ollama with:
    ```
