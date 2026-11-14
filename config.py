@@ -1,0 +1,20 @@
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
+
+BASE_DIR = Path(__file__).parent
+# git-ignored; facts, chats, documents. JARVIS_DATA_DIR lets tests use a throwaway folder.
+DATA_DIR = Path(os.environ.get("JARVIS_DATA_DIR") or BASE_DIR / "memory")
+DOCS_DIR = DATA_DIR / "docs"
+
+MODEL = "qwen3.5:4b"                    # chat + vision
+EMBED_MODEL = "nomic-embed-text"        # run `ollama pull nomic-embed-text`
+NUM_CTX = 8192                          # keeps the KV cache small enough for 4 GB VRAM
+
+PASSWORD = os.environ.get("JARVIS_PASSWORD")
+DEFAULT_CITY = os.environ.get("JARVIS_CITY")
+
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DOCS_DIR.mkdir(exist_ok=True)

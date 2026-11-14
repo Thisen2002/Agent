@@ -1,4 +1,6 @@
-ollama
-flask
-python-dotenv
-requests
+ollama==0.6.3
+flask==3.1.3
+python-dotenv==1.2.4
+requests==2.34.2
+pymupdf==2.1
+numpy==2.4.6
