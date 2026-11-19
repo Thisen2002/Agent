@@ -30,7 +30,8 @@ A local personal assistant with a web chat interface, powered by Ollama (`qwen3.
    ```
    OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0 ollama serve
    ```
-5. `python web.py`, then open `http://<host>:5000`.
+5. `python web.py`, then open `http://<host>:5000` and sign in with `JARVIS_PASSWORD`.
+   "Stay signed in" keeps a device signed in for 30 days. Five wrong passwords lock sign-in for 5 minutes, and changing the password signs every device out.
 
 ### Google Calendar (optional)
 1. In [Google Cloud Console](https://console.cloud.google.com), create a project and enable the **Google Calendar API**.

@@ -1,14 +1,17 @@
+import hashlib
 import hmac
+import secrets
 import sys
 import threading
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 
 import ollama
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory, session
 
 import docs
 import store
-from config import MODEL, NUM_CTX, PASSWORD
+from config import BASE_DIR, DATA_DIR, MODEL, NUM_CTX, PASSWORD
 from tools import TOOLS
 
 THINK_TRIGGERS = ("think about", "think hard", "think carefully", "think deeply")
@@ -66,9 +69,9 @@ def run_tool(call) -> str:
         return f"Tool error: {e}"
 
 
-def ask_jarvis(chat_id: str, user: str, images: list[str] | None = None) -> str:
+def ask_jarvis(chat_id: str, user: str, images: list[str] | None = None, think: bool = False) -> str:
     history = store.load_chat(chat_id)        # full chat; only the recent part goes to the model
-    think = wants_thinking(user)
+    think = think or wants_thinking(user)
     turn = {"role": "user", "content": user}
     if images:
         turn["images"] = images
@@ -101,262 +104,106 @@ def ask_jarvis(chat_id: str, user: str, images: list[str] | None = None) -> str:
     return reply
 
 
-PAGE = """<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Jarvis</title>
-<link rel="icon" href="data:,">
-<style>
-  * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; overflow: hidden; }
-  body { font-family: system-ui, sans-serif; background: #111; color: #eee;
-         display: flex; flex-direction: column;
-         height: 100vh; height: 100dvh; }
-  #top { display: flex; justify-content: space-between; align-items: center;
-         padding: 8px 16px; background: #1a1a1a; flex-shrink: 0; }
-  #top button { padding: 6px 12px; font-size: 14px; background: #333; color: #eee; }
-  #panel { position: fixed; top: 0; left: 0; bottom: 0; width: min(320px, 85vw);
-           background: #181818; border-right: 1px solid #333; padding: 12px;
-           overflow-y: auto; transform: translateX(-100%); transition: transform .2s; z-index: 10; }
-  #panel.open { transform: none; }
-  #panel h3 { margin: 16px 0 6px; font-size: 13px; color: #999; text-transform: uppercase; }
-  .row { display: flex; align-items: center; gap: 6px; padding: 8px; border-radius: 8px; }
-  .row:hover { background: #262626; }
-  .row.active { background: #2b2b3a; }
-  .row span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
-              white-space: nowrap; cursor: pointer; font-size: 14px; }
-  .row .del { padding: 2px 8px; font-size: 14px; background: transparent; color: #e66; }
-  .empty { color: #777; font-size: 13px; padding: 8px; }
-  #newchat { width: 100%; background: #2b5cff; color: #fff; padding: 10px; }
-  #log { flex: 1; min-height: 0; overflow-y: auto; padding: 16px; }
-  .msg { margin: 8px 0; padding: 10px 14px; border-radius: 12px; max-width: 80%;
-         white-space: pre-wrap; overflow-wrap: anywhere; }
-  .you { background: #2b5cff; margin-left: auto; }
-  .jarvis { background: #262626; }
-  #chip { padding: 6px 16px; font-size: 14px; color: #9ab; background: #1a1a1a;
-          flex-shrink: 0; display: none; }
-  #bar { display: flex; gap: 8px; padding: 12px; background: #1a1a1a;
-         flex-shrink: 0; }
-  #box { flex: 1; min-width: 0; padding: 12px; font-size: 16px; border-radius: 8px; border: 0; }
-  button { padding: 12px 18px; font-size: 16px; border-radius: 8px; border: 0; cursor: pointer; }
-</style>
-</head>
-<body>
-<div id="panel">
-  <button id="newchat">+ New chat</button>
-  <h3>Chats</h3><div id="chatlist"></div>
-  <h3>Documents</h3><div id="doclist"></div>
-</div>
-<div id="top"><button id="menu">&#9776; Menu</button><span>Jarvis</span><span></span></div>
-<div id="log"></div>
-<div id="chip"></div>
-<div id="bar">
-  <button id="attach" title="Attach a PDF or image">&#128206;</button>
-  <input id="file" type="file" accept=".pdf,application/pdf,image/*" hidden>
-  <input id="box" placeholder="Talk to Jarvis..." autocomplete="off">
-  <button id="send">Send</button>
-</div>
-<script>
-  let password = prompt("Password:");
-  const log = document.getElementById("log");
-  const box = document.getElementById("box");
-  const chip = document.getElementById("chip");
-  const fileInput = document.getElementById("file");
-  let chatId = null;
-  try { chatId = localStorage.getItem("jarvisChat"); } catch (e) {}
-  let pendingImage = null;   // base64 string, sent with the next message
-
-  function add(text, who) {
-    const d = document.createElement("div");
-    d.className = "msg " + who;
-    d.textContent = text;
-    log.appendChild(d);
-    log.scrollTop = log.scrollHeight;
-    return d;
-  }
-
-  function setChip(text) {
-    chip.textContent = text || "";
-    chip.style.display = text ? "block" : "none";
-  }
-
-  // shrink big photos so the model reads them faster
-  function imageToBase64(file) {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => {
-        const scale = Math.min(1, 1280 / Math.max(img.width, img.height));
-        const c = document.createElement("canvas");
-        c.width = Math.round(img.width * scale);
-        c.height = Math.round(img.height * scale);
-        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-        resolve(c.toDataURL("image/jpeg", 0.85).split(",")[1]);
-      };
-      img.onerror = reject;
-      img.src = URL.createObjectURL(file);
-    });
-  }
-
-  async function handleFile(file) {
-    if (!file) return;
-    if (file.type.startsWith("image/")) {
-      pendingImage = await imageToBase64(file);
-      setChip("Image attached: " + (file.name || "pasted image") + " - ask about it");
-      return;
-    }
-    const wait = add("Reading " + file.name + "... (scanned pages take a while)", "jarvis");
-    const form = new FormData();
-    form.append("file", file);
-    form.append("password", password);
-    try {
-      const r = await fetch("/upload", {method: "POST", body: form});
-      const data = await r.json();
-      if (r.status === 401) { password = prompt("Wrong password, try again:"); }
-      wait.textContent = data.reply || data.error || "Upload failed.";
-    } catch (e) {
-      wait.textContent = "Could not upload the file.";
-    }
-  }
-
-  async function send() {
-    const text = box.value.trim();
-    if (!text) return;
-    box.value = "";
-    const image = pendingImage;
-    pendingImage = null;
-    setChip("");
-    add(image ? text + "  [image]" : text, "you");
-    const wait = add("...", "jarvis");
-    try {
-      const r = await fetch("/chat", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({message: text, password: password, chat_id: chatId, images: image ? [image] : []})
-      });
-      const data = await r.json();
-      if (r.status === 401) { password = prompt("Wrong password, try again:"); }
-      if (data.chat_id) setChat(data.chat_id);
-      wait.textContent = data.reply || data.error || "Something went wrong.";
-    } catch (e) {
-      wait.textContent = "Could not reach Jarvis.";
-    }
-  }
-
-  async function api(path, extra) {
-    const r = await fetch(path, {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify(Object.assign({password: password}, extra || {}))
-    });
-    if (r.status === 401) { password = prompt("Wrong password, try again:"); }
-    return r.json();
-  }
-
-  function row(label, active, onOpen, onDelete) {
-    const d = document.createElement("div");
-    d.className = "row" + (active ? " active" : "");
-    const t = document.createElement("span");
-    t.textContent = label;
-    t.title = label;
-    if (onOpen) t.onclick = onOpen;
-    const x = document.createElement("button");
-    x.className = "del";
-    x.textContent = "\u2715";
-    x.title = "Delete";
-    x.onclick = onDelete;
-    d.append(t, x);
-    return d;
-  }
-
-  async function refreshPanel() {
-    const [c, d] = await Promise.all([api("/chats"), api("/documents")]);
-    const cl = document.getElementById("chatlist");
-    const dl = document.getElementById("doclist");
-    cl.innerHTML = ""; dl.innerHTML = "";
-    (c.chats || []).forEach(ch => cl.appendChild(row(ch.title, ch.id === chatId,
-      () => openChat(ch.id),
-      async () => {
-        if (!confirm("Delete this chat?")) return;
-        await api("/chats/delete", {id: ch.id});
-        if (ch.id === chatId) newChat();
-        refreshPanel();
-      })));
-    if (!cl.children.length) cl.innerHTML = '<div class="empty">No saved chats</div>';
-    (d.documents || []).forEach(doc => dl.appendChild(row(doc.name + " (" + doc.pages + "p)", false, null,
-      async () => {
-        if (!confirm("Delete " + doc.name + "?")) return;
-        await api("/documents/delete", {id: doc.id});
-        refreshPanel();
-      })));
-    if (!dl.children.length) dl.innerHTML = '<div class="empty">No documents</div>';
-  }
-
-  function setChat(id) {
-    chatId = id;
-    try { id ? localStorage.setItem("jarvisChat", id) : localStorage.removeItem("jarvisChat"); } catch (e) {}
-  }
-
-  function newChat() {
-    setChat(null);
-    log.innerHTML = "";
-    add("New conversation. I still remember our facts and your documents.", "jarvis");
-  }
-
-  async function openChat(id) {
-    const data = await api("/chats/get", {id: id});
-    setChat(id);
-    log.innerHTML = "";
-    (data.messages || []).forEach(m => add(m.text, m.who));
-    panel.classList.remove("open");
-    refreshPanel();
-  }
-
-  const panel = document.getElementById("panel");
-  document.getElementById("menu").onclick = () => {
-    panel.classList.toggle("open");
-    if (panel.classList.contains("open")) refreshPanel();
-  };
-  document.getElementById("newchat").onclick = () => { newChat(); panel.classList.remove("open"); };
-  log.addEventListener("click", () => panel.classList.remove("open"));
-
-  document.getElementById("send").onclick = send;
-  document.getElementById("attach").onclick = () => fileInput.click();
-  fileInput.onchange = () => { handleFile(fileInput.files[0]); fileInput.value = ""; };
-  box.addEventListener("keydown", e => { if (e.key === "Enter") send(); });
-  box.addEventListener("paste", e => {
-    for (const item of e.clipboardData.items) {
-      if (item.type.startsWith("image/")) { handleFile(item.getAsFile()); e.preventDefault(); }
-    }
-  });
-  if (chatId) openChat(chatId);
-</script>
-</body>
-</html>"""
-
-app = Flask(__name__)
+app = Flask(__name__, static_folder=None)
 app.config["MAX_CONTENT_LENGTH"] = 60 * 1024 * 1024   # 60 MB uploads
+STATIC_DIR = BASE_DIR / "static"
 
 
-def authorised(supplied) -> bool:
-    return bool(PASSWORD) and hmac.compare_digest(str(supplied or ""), PASSWORD)
+# ---------- sign-in ----------
+
+def _secret_key() -> bytes:
+    """Random key that signs session cookies; kept in the data folder so sign-ins survive restarts."""
+    path = DATA_DIR / "secret_key"
+    if not path.exists():
+        path.write_bytes(secrets.token_bytes(32))
+        path.chmod(0o600)
+    return path.read_bytes()
+
+
+app.secret_key = _secret_key()
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,          # page scripts cannot read the cookie
+    SESSION_COOKIE_SAMESITE="Strict",      # other sites cannot make requests with it
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+)
+
+MAX_FAILS = 5
+LOCKOUT_SECONDS = 5 * 60
+failed = {}                                 # ip -> [fail count, locked until]
+fail_lock = threading.Lock()
+
+
+def password_tag() -> str:
+    """Changes whenever the password changes, which signs every device out."""
+    return hashlib.sha256(app.secret_key + (PASSWORD or "").encode()).hexdigest()[:16]
+
+
+def signed_in() -> bool:
+    return bool(PASSWORD) and session.get("auth") == password_tag()
+
+
+def guarded(handler):
+    """Decorator: requires a signed-in session; passes the JSON body to the handler as a dict."""
+    def wrapper():
+        if not signed_in():
+            return jsonify(error="Please sign in."), 401
+        return handler(request.get_json(silent=True) or {})
+    wrapper.__name__ = handler.__name__
+    return wrapper
 
 
 @app.route("/")
 def index():
-    return PAGE
+    return send_from_directory(STATIC_DIR, "index.html")
 
 
-def guarded(handler):
-    """Decorator: JSON body with a valid password, passed to the handler as a dict."""
-    def wrapper():
-        data = request.get_json(silent=True) or {}
-        if not authorised(data.get("password")):
-            return jsonify(error="Wrong password."), 401
-        return handler(data)
-    wrapper.__name__ = handler.__name__
-    return wrapper
+@app.route("/static/<path:name>")
+def static_file(name):
+    resp = send_from_directory(STATIC_DIR, name)
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
+@app.route("/me")
+def me():
+    return jsonify(signed_in=signed_in())
+
+
+@app.route("/login", methods=["POST"])
+def login():
+    ip = request.remote_addr or "?"
+    now = time.time()
+    with fail_lock:
+        count, until = failed.get(ip, [0, 0])
+        if until > now:
+            wait = int(until - now) + 1
+            mins = -(-wait // 60)
+            return jsonify(error=f"Too many wrong attempts. Try again in {mins} minute{'s' if mins != 1 else ''}.", retry=wait), 429
+
+    data = request.get_json(silent=True) or {}
+    if PASSWORD and hmac.compare_digest(str(data.get("password") or ""), PASSWORD):
+        with fail_lock:
+            failed.pop(ip, None)
+        session.clear()
+        session["auth"] = password_tag()
+        session.permanent = bool(data.get("remember"))
+        return jsonify(ok=True)
+
+    time.sleep(0.5)                          # slows down guessing
+    with fail_lock:
+        count += 1
+        if count >= MAX_FAILS:
+            failed[ip] = [0, now + LOCKOUT_SECONDS]
+            return jsonify(error="Too many wrong attempts. Sign-in is locked for 5 minutes.", retry=LOCKOUT_SECONDS), 429
+        failed[ip] = [count, 0]
+    left = MAX_FAILS - count
+    return jsonify(error=f"Wrong password. {left} attempt{'s' if left != 1 else ''} left."), 401
+
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return jsonify(ok=True)
 
 
 @app.route("/chat", methods=["POST"])
@@ -371,7 +218,7 @@ def chat(data):
     images = [i for i in (data.get("images") or []) if isinstance(i, str)][:1]
     try:
         with lock:
-            reply = ask_jarvis(chat_id, user, images)
+            reply = ask_jarvis(chat_id, user, images, think=data.get("think") is True)
     except Exception as e:                       # Ollama not running, model missing, ...
         return jsonify(error=f"Jarvis's brain is offline: {e}", chat_id=chat_id), 503
     return jsonify(reply=reply or "(no answer)", chat_id=chat_id)
@@ -420,8 +267,8 @@ def documents_delete(data):
 
 @app.route("/upload", methods=["POST"])
 def upload():
-    if not authorised(request.form.get("password")):
-        return jsonify(error="Wrong password."), 401
+    if not signed_in():
+        return jsonify(error="Please sign in."), 401
     f = request.files.get("file")
     if not f or not f.filename.lower().endswith(".pdf"):
         return jsonify(error="Please upload a PDF."), 400
