@@ -15,6 +15,7 @@ NUM_CTX = 8192                          # keeps the KV cache small enough for 4 
 
 PASSWORD = os.environ.get("JARVIS_PASSWORD")
 DEFAULT_CITY = os.environ.get("JARVIS_CITY")
+TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY")   # web search; free key at tavily.com
 
 # Google Calendar: OAuth client from Google Cloud Console, and the token saved by `python gcal.py`
 GOOGLE_CREDENTIALS = BASE_DIR / "credentials.json"

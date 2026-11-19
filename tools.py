@@ -2,11 +2,12 @@
 from datetime import datetime
 
 import requests
+import trafilatura
 
 import docs
 import gcal
 import store
-from config import DEFAULT_CITY
+from config import DEFAULT_CITY, TAVILY_API_KEY
 
 
 def get_time() -> str:
@@ -220,9 +221,84 @@ def delete_calendar_event(query: str) -> str:
     return f"Deleted: {gcal.describe(matches[0])}"
 
 
+# ---------- web ----------
+
+PAGE_LIMIT = 4000          # characters of page text; keeps tool results inside NUM_CTX
+BROWSER_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
+
+
+def web_search(query: str, news: bool = False) -> str:
+    """Search the internet. Use for current events, prices, recent facts, or anything you do not know. Say which site the answer came from.
+
+    Args:
+        query: What to search for, for example "Sri Lanka vs India cricket result".
+        news: True for recent news and headlines ("latest", "today"), otherwise false.
+    """
+    if not TAVILY_API_KEY:
+        return "Web search is not set up: TAVILY_API_KEY is missing from Thisen's .env file."
+    if isinstance(news, str):
+        news = news.strip().lower() in ("true", "yes", "1")
+    try:
+        resp = requests.post(
+            "https://api.tavily.com/search",
+            headers={"Authorization": f"Bearer {TAVILY_API_KEY}"},
+            json={
+                "query": query,
+                "topic": "news" if news else "general",
+                "search_depth": "basic",          # 1 credit per search (1,000 free a month)
+                "max_results": 5,
+                "include_answer": True,
+            },
+            timeout=20,
+        )
+    except requests.RequestException:
+        return "The search service could not be reached."
+    if resp.status_code == 401:
+        return "Web search failed: the Tavily API key is invalid."
+    if resp.status_code in (429, 432, 433):
+        return "Web search is unavailable: the Tavily free limit for this month has been used up."
+    if not resp.ok:
+        return f"Web search failed (error {resp.status_code})."
+
+    data = resp.json()
+    results = data.get("results") or []
+    if not results:
+        return f"No results for '{query}'. Try different words."
+    lines = [f"Summary: {data['answer']}\n"] if data.get("answer") else []
+    for i, r in enumerate(results, 1):
+        date = f" ({r['published_date'][:16]})" if r.get("published_date") else ""
+        lines.append(f"{i}. {r.get('title', '')}{date}\n   {r.get('url', '')}\n   {(r.get('content') or '')[:500]}")
+    return "\n".join(lines)
+
+
+def read_webpage(url: str) -> str:
+    """Read the main text of a web page, for example one found with web_search, when the search snippets are not enough.
+
+    Args:
+        url: Full address starting with http:// or https://.
+    """
+    url = url.strip()
+    if not url.startswith(("http://", "https://")):
+        return "The address must start with http:// or https://."
+    try:
+        resp = requests.get(url, headers={"User-Agent": BROWSER_UA}, timeout=15)
+        resp.raise_for_status()
+    except requests.RequestException as e:
+        return f"Could not open the page: {e}"
+    if "html" not in resp.headers.get("Content-Type", "html"):
+        return f"That address is not a web page ({resp.headers['Content-Type']}), so it cannot be read."
+    text = trafilatura.extract(resp.text, url=url)
+    if not text:
+        return "Could not find readable text on that page."
+    if len(text) > PAGE_LIMIT:
+        text = text[:PAGE_LIMIT] + "\n[... page cut short]"
+    return f"[Web page: {url}]\n{text}"
+
+
 TOOLS = {f.__name__: f for f in (
     get_time, get_weather,
     remember, recall, forget,
     list_documents, search_documents, read_page, summarize_document,
     add_calendar_event, list_calendar_events, delete_calendar_event,
+    web_search, read_webpage,
 )}

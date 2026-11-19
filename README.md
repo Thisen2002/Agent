@@ -4,6 +4,7 @@ A local personal assistant with a web chat interface, powered by Ollama (`qwen3.
 
 ## Features
 - Chat with tools: time, weather
+- **Web search**: Jarvis searches the internet with [Tavily](https://tavily.com) for current information and can read a page in full; it says which site it used. Needs a free `TAVILY_API_KEY` in `.env` (1,000 searches a month, no card).
 - **Google Calendar**: say "add this event" and paste the message about it. Jarvis adds it and reads back what it added. It can also list upcoming events and delete one ("remove the tech talk").
 - **Memory**: saves lasting facts (`remember` / `recall` / `forget`) and keeps every chat across restarts. Stored in `memory/` (git-ignored).
 - **PDFs**: upload with the paperclip. Text is extracted per page, scanned pages are read by the vision model, and passages are searched with embeddings. Jarvis cites page numbers.
