@@ -4,6 +4,7 @@ from datetime import datetime
 import requests
 
 import docs
+import gcal
 import store
 from config import DEFAULT_CITY
 
@@ -157,8 +158,71 @@ def summarize_document(document: str = "", focus: str = "") -> str:
     return docs.summarize(d, focus)
 
 
+# ---------- calendar ----------
+
+def _calendar_error(e: Exception) -> str:
+    if isinstance(e, RuntimeError):
+        return str(e)
+    return f"The calendar request failed: {e}"
+
+
+def add_calendar_event(title: str, start: str, end: str = "", location: str = "", notes: str = "") -> str:
+    """Add an event to Thisen's Google Calendar. Use this when he asks to add an event, often with a pasted message describing it. Work out the date from today's date. Afterwards, tell him exactly what was added.
+
+    Args:
+        title: Short event name, for example "IESL tech talk".
+        start: Start as ISO local time, for example "2026-11-28T15:30". For an all-day event give only the date, "2026-11-28".
+        end: End in the same format. Leave empty if the message gives no end time (defaults to one hour).
+        location: Place, if mentioned.
+        notes: Other useful details from the message (links, what to bring, organiser). Keep it brief.
+    """
+    try:
+        ev = gcal.add_event(title, start, end, location, notes)
+    except ValueError as e:
+        return f"Could not add the event: {e}"
+    except Exception as e:
+        return _calendar_error(e)
+    return f"Added to Google Calendar: {gcal.describe(ev)}"
+
+
+def list_calendar_events(days: int = 7, query: str = "") -> str:
+    """List Thisen's upcoming Google Calendar events.
+
+    Args:
+        days: How many days ahead to look. Defaults to 7.
+        query: Optional words to search for in the events.
+    """
+    try:
+        events = gcal.upcoming(int(days), query)
+    except Exception as e:
+        return _calendar_error(e)
+    if not events:
+        return f"No events in the next {days} days" + (f" matching '{query}'." if query else ".")
+    return "\n".join(f"- {gcal.describe(ev)}" for ev in events)
+
+
+def delete_calendar_event(query: str) -> str:
+    """Delete an upcoming Google Calendar event (next 60 days). Only use when Thisen asks to remove an event, for example one you added wrongly.
+
+    Args:
+        query: Words from the event's title, for example "tech talk".
+    """
+    try:
+        matches = gcal.upcoming(60, query)
+        if not matches:
+            return f"No upcoming event matches '{query}'."
+        if len(matches) > 1:
+            listing = "\n".join(f"- {gcal.describe(ev)}" for ev in matches)
+            return f"Several events match; ask Thisen which one, then search with more specific words:\n{listing}"
+        gcal.delete_event(matches[0]["id"])
+    except Exception as e:
+        return _calendar_error(e)
+    return f"Deleted: {gcal.describe(matches[0])}"
+
+
 TOOLS = {f.__name__: f for f in (
     get_time, get_weather,
     remember, recall, forget,
     list_documents, search_documents, read_page, summarize_document,
+    add_calendar_event, list_calendar_events, delete_calendar_event,
 )}

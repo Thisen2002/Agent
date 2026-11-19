@@ -4,3 +4,5 @@ python-dotenv==1.2.4
 requests==2.34.2
 pymupdf==2.1
 numpy==2.4.6
+google-api-python-client==2.202.0
+google-auth-oauthlib==1.5.0

@@ -3,3 +3,4 @@ __pycache__/
 .env
 notes.txt
 memory/
+credentials.json

@@ -1,6 +1,7 @@
 import hmac
 import sys
 import threading
+from datetime import datetime
 
 import ollama
 from flask import Flask, request, jsonify
@@ -26,13 +27,16 @@ SYSTEM = (
     "Use the tools provided when they help; never guess the time. "
     "When Thisen tells you a lasting fact about himself or his life, save it with the remember tool. "
     "For questions about an uploaded document, call search_documents first and cite page numbers. "
+    "When Thisen asks to add an event, call add_calendar_event, then tell him the exact date, time and place you added. "
+    "If the date or time is missing or ambiguous, ask him instead of guessing. "
     "If you are unsure, say so instead of guessing."
 )
 
 
 def system_prompt() -> str:
     # rebuilt every turn so new facts and documents show up immediately
-    return SYSTEM + store.facts_block() + docs.library_block()
+    today = datetime.now().astimezone().strftime("%A, %d %B %Y, %I:%M %p (UTC%z)")
+    return SYSTEM + f"\nToday is {today}." + store.facts_block() + docs.library_block()
 
 
 lock = threading.Lock()               # one request at a time
